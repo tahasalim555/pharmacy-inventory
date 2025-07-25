@@ -187,6 +187,62 @@
       justify-content: space-between;
       margin-bottom: 20px;
     }
+
+    /* تنسيقات شريط البحث الجديدة */
+    .search-container {
+      position: relative;
+      margin: 20px 0;
+      width: 100%;
+      max-width: 500px;
+    }
+
+    #medicineSearch {
+      width: 100%;
+      padding: 12px 15px;
+      border: 2px solid #4CAF50;
+      border-radius: 8px;
+      font-size: 16px;
+      outline: none;
+    }
+
+    #medicineSearch:focus {
+      border-color: #2E7D32;
+    }
+
+    #searchSuggestions {
+      display: none;
+      position: absolute;
+      width: 100%;
+      max-height: 250px;
+      overflow-y: auto;
+      background: white;
+      border: 1px solid #ddd;
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      z-index: 1000;
+    }
+
+    .suggestion-item {
+      padding: 10px 15px;
+      cursor: pointer;
+      border-bottom: 1px solid #eee;
+      transition: background 0.2s;
+    }
+
+    .suggestion-item:hover {
+      background-color: #f5f5f5;
+    }
+
+    .suggestion-item .highlight {
+      color: #2E7D32;
+      font-weight: bold;
+    }
+
+    .no-results {
+      padding: 10px 15px;
+      color: #757575;
+    }
     
     @media (max-width: 768px) {
       .header-content {
@@ -247,6 +303,15 @@
 
     <div class="section">
       <h3 class="section-title">نتائج التحليل</h3>
+      <div class="search-container">
+        <input 
+          type="text" 
+          id="medicineSearch" 
+          placeholder="ابحث عن دواء (استخدم % للحروف غير المؤكدة)..."
+          autocomplete="off"
+        >
+        <div id="searchSuggestions"></div>
+      </div>
       <div id="reportDate" style="text-align: center; margin-bottom: 10px; font-weight: bold;"></div>
       <div style="overflow-x: auto;">
         <table id="resultsTable">
@@ -273,6 +338,10 @@
   </div>
 
   <script>
+    // متغيرات عامة
+    let medicineNames = [];
+    let analysisResults = [];
+
     document.getElementById('inventoryFile').addEventListener('change', function(e) {
       document.getElementById('inventoryFileName').textContent = 'تم اختيار: ' + (e.target.files[0]?.name || 'لا يوجد ملف');
     });
@@ -294,6 +363,9 @@
         const workbook = XLSX.read(data, { type: 'array' });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
         const inventoryData = XLSX.utils.sheet_to_json(sheet);
+
+        // استخراج أسماء الأدوية للبحث
+        medicineNames = inventoryData.map(item => item['اسم الدواء'] || item['الصنف'] || 'غير معروف');
 
         const consumptionFile = document.getElementById('consumptionFile').files[0];
         if (consumptionFile) {
@@ -332,7 +404,7 @@
       const today = new Date();
       document.getElementById('reportDate').textContent = 'تاريخ التقرير: ' + today.toLocaleDateString('ar-EG');
 
-      const results = data.map(item => {
+      analysisResults = data.map(item => {
         const consumptionValues = [];
         for (const key in item) {
           if (key !== 'اسم الدواء' && key !== 'نوع الدواء' && key !== 'المخزون الحالي' && !isNaN(item[key])) {
@@ -373,9 +445,9 @@
         };
       });
 
-      window.analysisResults = results;
       document.getElementById('downloadBtn').disabled = false;
-      displayResults(results);
+      displayResults(analysisResults);
+      initSearch();
     }
 
     function displayResults(results) {
@@ -459,14 +531,14 @@
     }
 
     function downloadExcel() {
-      if (!window.analysisResults || window.analysisResults.length === 0) {
+      if (!analysisResults || analysisResults.length === 0) {
         alert("لا توجد بيانات متاحة للتنزيل.");
         return;
       }
 
       const wsData = [
         ["اسم الدواء", "نوع الدواء", "أعلى 3 شهور", "متوسط الاستهلاك", "حد الأمان", "حد الخطر", "حد الكفاية", "المخزون الحالي", "المنصرف اليومي", "الكمية المتبقية", "كمية الطلب", "حالة الصنف"],
-        ...window.analysisResults.map(item => [
+        ...analysisResults.map(item => [
           item.name, item.type, item.top3.join(', '), item.avg, item.safe, item.danger,
           item.sufficiency, item.stock, item.dailyConsumption, item.remaining, item.order, item.status
         ])
@@ -480,6 +552,90 @@
       const filename = `تحليل_المخزون_${today}.xlsx`;
 
       XLSX.writeFile(wb, filename);
+    }
+
+    // نظام البحث الذكي
+    function initSearch() {
+      const searchInput = document.getElementById('medicineSearch');
+      const suggestionsContainer = document.getElementById('searchSuggestions');
+
+      // دالة البحث مع دعم %
+      function searchMedicines(query) {
+        if (!query) return [];
+        
+        const regexPattern = query
+          .replace(/%/g, '.')  // استبدال % بـ . (أي حرف)
+          .replace(/\s+/g, '.*');
+          
+        const regex = new RegExp(regexPattern, 'i');
+        return medicineNames.filter(name => regex.test(name));
+      }
+
+      // عرض الاقتراحات
+      function showSuggestions(results, query) {
+        suggestionsContainer.innerHTML = '';
+        
+        if (results.length === 0) {
+          suggestionsContainer.innerHTML = '<div class="no-results">لا توجد نتائج</div>';
+          suggestionsContainer.style.display = 'block';
+          return;
+        }
+        
+        results.forEach(medicine => {
+          const suggestionItem = document.createElement('div');
+          suggestionItem.className = 'suggestion-item';
+          
+          // تمييز الجزء المطابق
+          const highlightedText = medicine.replace(
+            new RegExp(query.replace(/%/g, '.'), 'gi'),
+            match => `<span class="highlight">${match}</span>`
+          );
+          
+          suggestionItem.innerHTML = highlightedText;
+          suggestionItem.addEventListener('click', () => {
+            searchInput.value = medicine;
+            filterTable(medicine);
+            suggestionsContainer.style.display = 'none';
+          });
+          
+          suggestionsContainer.appendChild(suggestionItem);
+        });
+        
+        suggestionsContainer.style.display = 'block';
+      }
+
+      // تصفية الجدول
+      function filterTable(searchTerm) {
+        const rows = document.querySelectorAll('#resultsTable tr');
+        const regex = new RegExp(searchTerm.replace(/%/g, '.'), 'i');
+        
+        rows.forEach((row, index) => {
+          if (index === 0) return; // تخطي رأس الجدول
+          
+          const medicineName = row.cells[0].textContent;
+          row.style.display = regex.test(medicineName) ? '' : 'none';
+        });
+      }
+
+      // أحداث البحث
+      searchInput.addEventListener('input', function() {
+        const query = this.value.trim();
+        const results = searchMedicines(query);
+        showSuggestions(results, query);
+      });
+
+      document.addEventListener('click', function(e) {
+        if (e.target !== searchInput) {
+          suggestionsContainer.style.display = 'none';
+        }
+      });
+
+      searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          filterTable(this.value);
+          suggestionsContainer.style.display = 'none';
+        }
+      });
     }
   </script>
 </body>
